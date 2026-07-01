@@ -112,14 +112,7 @@ function saveLocalItems() {
 }
 
 function getDefaultStarterItems() {
-    return [
-        { id: "1", name: 'كلافي ميكانيكية MSI GK310 🔌', category: '💻 عمل ومكتب', bought: true, price: 8700, time: Date.now() },
-        { id: "2", name: 'ستيك 🥩', category: '🥩 اغذية', bought: false, price: 0, time: 0 },
-        { id: "3", name: 'بريكة 🔥', category: '🛒 اخرى', bought: false, price: 0, time: 0 },
-        { id: "4", name: 'مراية 🪞', category: '🛒 اخرى', bought: false, price: 0, time: 0 },
-        { id: "5", name: 'ساكادو ليّا أنا 🎒', category: '👕 ملابس', bought: false, price: 0, time: 0 },
-        { id: "6", name: 'ساكادو لولدي 🎒', category: '👕 ملابس', bought: false, price: 0, time: 0 }
-    ];
+    return [];
 }
 
 // ------------------------------------------------------------------
