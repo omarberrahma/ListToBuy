@@ -1,9 +1,19 @@
 // ------------------------------------------------------------------
-// متغيرات عالمية ومعالجة الأعطال لضمان الاستقرار
+// 1. إعدادات ومفاتيح FIREBASE الحقيقية للمشروع
 // ------------------------------------------------------------------
+const realFirebaseConfig = {
+    apiKey: "AIzaSyD-1-cHPypztySKjjszacr8wH0my17BVaY",
+    authDomain: "tobuylist-48f07.firebaseapp.com",
+    projectId: "tobuylist-48f07",
+    storageBucket: "tobuylist-48f07.firebasestorage.app",
+    messagingSenderId: "358300266390",
+    appId: "1:358300266390:web:36f6f2347929d66f4f37b7"
+};
+
+// متغيرات عالمية ومعالجة الأعطال لضمان الاستقرار
 let db = null;
 let auth = null;
-let appId = "dz-shopping-app-v3";
+let appId = "tobuylist-48f07";
 let items = [];
 let currentUserId = null;
 let currentActiveId = null;
@@ -28,19 +38,11 @@ if (typeof tailwind !== 'undefined') {
     };
 }
 
-// تهيئة Firebase بشكل متوافق وآمن
 function initFirebase() {
     try {
-        let firebaseConfig = null;
-
-        // التحقق مما إذا كان هناك تكوين Firebase مخزن أو مقدم
-        if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-            firebaseConfig = JSON.parse(__firebase_config);
-        }
-
-        if (firebaseConfig && typeof firebase !== 'undefined') {
+        if (typeof firebase !== 'undefined') {
             if (!firebase.apps.length) {
-                firebase.initializeApp(firebaseConfig);
+                firebase.initializeApp(realFirebaseConfig);
             }
             db = firebase.firestore();
             auth = firebase.auth();
@@ -68,8 +70,7 @@ function initFirebase() {
                 }
             });
         } else {
-            // لا توجد بيئة Firebase، تحميل البيانات محلياً
-            console.log("Firebase config not found, using local storage.");
+            console.log("Firebase SDK not loaded, using local storage.");
             loadLocalItems();
         }
     } catch(e) {
