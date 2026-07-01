@@ -27,3 +27,27 @@ body {
     -webkit-backdrop-filter: blur(12px);
     border: 1px solid rgba(255, 255, 255, 0.05);
 }
+
+/* Animations for page transitions */
+.page-section {
+    animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Custom styles for inputs */
+input:focus, select:focus {
+    box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.2);
+}
+
+/* Bottom nav active state enhancement */
+#bottom-nav button {
+    transition: all 0.2s ease;
+}
+
+#bottom-nav button:active {
+    scale: 0.9;
+}

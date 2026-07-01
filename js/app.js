@@ -18,25 +18,8 @@ let items = [];
 let currentUserId = null;
 let currentActiveId = null;
 let selectedCategory = "🛒 اخرى";
-let currentTab = "shopping";
-
-// تكوين Tailwind CSS
-if (typeof tailwind !== 'undefined') {
-    tailwind.config = {
-        theme: {
-            extend: {
-                colors: {
-                    navy: {
-                        900: '#0b132b',
-                        800: '#1c2541',
-                        700: '#3a506b',
-                        light: '#5bc0be'
-                    }
-                }
-            }
-        }
-    };
-}
+let currentPage = "auth";
+let historyStack = [];
 
 function initFirebase() {
     try {
@@ -51,72 +34,133 @@ function initFirebase() {
             auth.onAuthStateChanged(async (user) => {
                 if (user) {
                     currentUserId = user.uid;
-                    updateSyncStatus(true);
-                    document.getElementById('auth-inputs-container').classList.add('hidden');
-                    document.getElementById('user-info-container').classList.remove('hidden');
-                    document.getElementById('user-avatar').innerText = (user.email ? user.email.charAt(0).toUpperCase() : 'M');
-                    document.getElementById('user-name-display').innerText = user.email ? user.email.split('@')[0] : 'مطور ويب';
+                    document.getElementById('user-name-display-home').innerText = `صوالح ${user.email ? user.email.split('@')[0] : 'المطور'}`;
 
                     // تحميل ومراقبة العناصر لهذا المستخدم المسجل
                     setupItemsListener();
+
+                    if (currentPage === 'auth') {
+                        navigateTo('home');
+                    }
                 } else {
                     currentUserId = null;
-                    updateSyncStatus(false);
-                    document.getElementById('auth-inputs-container').classList.remove('hidden');
-                    document.getElementById('user-info-container').classList.add('hidden');
-
-                    // تحميل العناصر من التخزين المحلي
-                    loadLocalItems();
+                    items = [];
+                    renderApp();
+                    navigateTo('auth');
                 }
             });
         } else {
             console.log("Firebase SDK not loaded, using local storage.");
             loadLocalItems();
+            navigateTo('home');
         }
     } catch(e) {
         console.error("Firebase startup issues handled:", e);
         loadLocalItems();
+        navigateTo('home');
     }
 }
 
-function updateSyncStatus(isSynced) {
-    const status = document.getElementById('sync-status');
-    if (isSynced) {
-        status.innerText = "سحابي متزامن 🌐";
-        status.className = "text-[9px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md";
+// ------------------------------------------------------------------
+// نظام التنقل (Routing)
+// ------------------------------------------------------------------
+function navigateTo(pageId, addToHistory = true) {
+    if (addToHistory && currentPage !== pageId) {
+        historyStack.push(currentPage);
+        window.location.hash = pageId;
+    }
+
+    currentPage = pageId;
+
+    // إخفاء كل الصفحات
+    document.querySelectorAll('.page-section').forEach(p => p.classList.add('hidden'));
+
+    // إظهار الصفحة المطلوبة
+    const targetPage = document.getElementById(`page-${pageId}`);
+    if (targetPage) {
+        targetPage.classList.remove('hidden');
+    }
+
+    // التحكم في شريط التنقل السفلي
+    const nav = document.getElementById('bottom-nav');
+    if (!nav) return;
+    if (pageId === 'auth' || pageId === 'edit') {
+        nav.classList.add('hidden');
     } else {
-        status.innerText = "حفظ محلي فقط 💾";
-        status.className = "text-[9px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md";
+        nav.classList.remove('hidden');
+    }
+
+    // تحديث شكل أزرار التنقل
+    updateNavButtons(pageId);
+
+    // تنفيذ عمليات خاصة بالصفحة
+    if (pageId === 'home') renderApp();
+    if (pageId === 'archive') renderArchiveView();
+
+    window.scrollTo(0, 0);
+}
+
+window.addEventListener('hashchange', () => {
+    const pageId = window.location.hash.replace('#', '');
+    if (pageId && pageId !== currentPage) {
+        navigateTo(pageId, false);
+    }
+});
+
+function updateNavButtons(activeId) {
+    const navItems = ['home', 'archive', 'ai'];
+    navItems.forEach(id => {
+        const btn = document.getElementById(`nav-${id}`);
+        if (btn) {
+            if (id === activeId) {
+                btn.classList.remove('text-slate-400');
+                btn.classList.add('text-cyan-400');
+            } else {
+                btn.classList.remove('text-cyan-400');
+                btn.classList.add('text-slate-400');
+            }
+        }
+    });
+}
+
+function goBack() {
+    if (historyStack.length > 0) {
+        const prev = historyStack.pop();
+        navigateTo(prev, false);
+    } else {
+        navigateTo('home');
     }
 }
 
 // ------------------------------------------------------------------
-// نظام تخزين واسترجاع العناصر محلياً
+// نظام تخزين واسترجاع العناصر محلياً (مع عزل البيانات)
 // ------------------------------------------------------------------
+function getStorageKey() {
+    return currentUserId ? `items_${currentUserId}` : 'items_guest';
+}
+
 function loadLocalItems() {
-    const cached = localStorage.getItem('shopping_items_mobile_v3');
+    const key = getStorageKey();
+    const cached = localStorage.getItem(key);
     if (cached) {
         try {
             items = JSON.parse(cached);
         } catch(err) {
-            items = getDefaultStarterItems();
+            items = [];
         }
     } else {
-        items = getDefaultStarterItems();
+        items = [];
     }
     renderApp();
 }
 
 function saveLocalItems() {
-    localStorage.setItem('shopping_items_mobile_v3', JSON.stringify(items));
-}
-
-function getDefaultStarterItems() {
-    return [];
+    const key = getStorageKey();
+    localStorage.setItem(key, JSON.stringify(items));
 }
 
 // ------------------------------------------------------------------
-// مزامنة Firestore (الامتثال للقواعد 1، 2، 3)
+// مزامنة Firestore
 // ------------------------------------------------------------------
 let unsubsItems = null;
 function setupItemsListener() {
@@ -125,10 +169,8 @@ function setupItemsListener() {
 
     if (unsubsItems) unsubsItems();
 
-    // المسار: /artifacts/{appId}/users/{userId}/{collectionName}
     const collectionRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('items');
 
-    // استرجاع سريع، مرتب في الذاكرة
     unsubsItems = collectionRef.onSnapshot((snapshot) => {
         const fetched = [];
         snapshot.forEach(doc => {
@@ -138,13 +180,24 @@ function setupItemsListener() {
         if (fetched.length > 0) {
             items = fetched;
             saveLocalItems();
-            renderApp();
+            if (currentPage === 'home') renderApp();
+            if (currentPage === 'archive') renderArchiveView();
         } else {
-            // تهيئة قاعدة البيانات لهذا المستخدم في السحابة
-            initUserDatabaseInCloud(uid);
+            // إذا كانت السحابة فارغة لهذا المستخدم
+            // إذا كان هناك عناصر في الذاكرة (مثلاً من وضع الضيف قبل تسجيل الدخول)، نرفعها
+            if (items.length > 0) {
+                saveLocalItems();
+                initUserDatabaseInCloud(uid);
+            } else {
+                // وإلا نحاول تحميل البيانات المحلية الخاصة بهذا المستخدم
+                loadLocalItems();
+                if (items.length > 0) {
+                    initUserDatabaseInCloud(uid);
+                }
+            }
         }
     }, (error) => {
-        console.error("Cloud listening failed, keeping local active:", error);
+        console.error("Cloud listening failed:", error);
         loadLocalItems();
     });
 }
@@ -153,22 +206,11 @@ async function initUserDatabaseInCloud(uid) {
     if (!db) return;
     const collectionRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('items');
     const batch = db.batch();
-
-    const toInitialize = items.length > 0 ? items : getDefaultStarterItems();
-
-    toInitialize.forEach(item => {
-        const docRef = collectionRef.doc();
-        batch.set(docRef, {
-            ...item,
-            id: docRef.id
-        });
+    items.forEach(item => {
+        const docRef = collectionRef.doc(item.id);
+        batch.set(docRef, item);
     });
-
-    try {
-        await batch.commit();
-    } catch(e) {
-        console.error("Batch write failed", e);
-    }
+    try { await batch.commit(); } catch(e) {}
 }
 
 async function syncItemToCloud(item) {
@@ -177,9 +219,7 @@ async function syncItemToCloud(item) {
         const uid = auth.currentUser.uid;
         const docRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('items').doc(item.id);
         await docRef.set(item, { merge: true });
-    } catch(e) {
-        console.error("Single item cloud update issue:", e);
-    }
+    } catch(e) {}
 }
 
 async function deleteItemInCloud(itemId) {
@@ -188,13 +228,11 @@ async function deleteItemInCloud(itemId) {
         const uid = auth.currentUser.uid;
         const docRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('items').doc(itemId);
         await docRef.delete();
-    } catch(e) {
-        console.error("Cloud delete issue:", e);
-    }
+    } catch(e) {}
 }
 
 // ------------------------------------------------------------------
-// عمليات التوثيق (تسجيل الدخول / إنشاء حساب)
+// عمليات التوثيق
 // ------------------------------------------------------------------
 async function loginUser() {
     playAudioTone(250, 'triangle', 0.05);
@@ -205,19 +243,15 @@ async function loginUser() {
         showToast("الرجاء إدخال اسم المستخدم والكود السري!", "⚠️");
         return;
     }
-    if (passInp.length < 6) {
-        showToast("الكود السري يجب أن يكون من 6 أرقام أو حروف على الأقل!", "⚠️");
-        return;
-    }
 
     const email = `${userInp}@smartdzlist.com`;
     try {
         if (auth) {
             await auth.signInWithEmailAndPassword(email, passInp);
-            showToast("تم الدخول والاتصال السحابي بنجاح!", "🎉");
+            showToast("تم الدخول بنجاح!", "🎉");
         }
     } catch(e) {
-        showToast("خطأ! تفقد معلومات الحساب أو جرب إنشاء حساب جديد.", "❌");
+        showToast("خطأ في تسجيل الدخول. تأكد من البيانات.", "❌");
     }
 }
 
@@ -231,7 +265,7 @@ async function registerUser() {
         return;
     }
     if (passInp.length < 6) {
-        showToast("الكود السري يجب أن يكون من 6 خانات على الأقل!", "⚠️");
+        showToast("الكود السري يجب أن يكون 6 خانات فأكثر.", "⚠️");
         return;
     }
 
@@ -239,14 +273,10 @@ async function registerUser() {
     try {
         if (auth) {
             await auth.createUserWithEmailAndPassword(email, passInp);
-            showToast("مبروك! تم إنشاء حسابك ومزامنته سحابياً.", "✨");
+            showToast("تم إنشاء الحساب بنجاح!", "✨");
         }
     } catch(e) {
-        if (e.code === 'auth/email-already-in-use') {
-            showToast("اسم المستخدم محجوز! جرب اسماً آخر.", "❌");
-        } else {
-            showToast("فشل إنشاء الحساب السحابي.", "❌");
-        }
+        showToast("فشل إنشاء الحساب. قد يكون الاسم مستخدماً.", "❌");
     }
 }
 
@@ -255,35 +285,13 @@ async function logoutUser() {
     if (unsubsItems) unsubsItems();
     if (auth) {
         await auth.signOut();
-        currentUserId = null;
-        showToast("تم تسجيل الخروج. العودة للحفظ المحلي.", "🚪");
+        showToast("تم تسجيل الخروج.", "🚪");
     }
 }
 
 // ------------------------------------------------------------------
-// واجهات المستخدم والتحكم في التبويبات
+// إدارة الفئات (Categories)
 // ------------------------------------------------------------------
-function switchTab(tabId) {
-    playAudioTone(400, 'sine', 0.05);
-    currentTab = tabId;
-    const tabs = ['shopping', 'archive', 'ai'];
-    tabs.forEach(t => {
-        const panel = document.getElementById(`tab-${t}-panel`);
-        const btn = document.getElementById(`tab-btn-${t}`);
-        if (t === tabId) {
-            panel.classList.remove('hidden');
-            btn.className = "flex-1 text-xs py-2.5 rounded-xl font-bold transition-all bg-cyan-500/20 text-white border border-cyan-500/25";
-        } else {
-            panel.classList.add('hidden');
-            btn.className = "flex-1 text-xs py-2.5 rounded-xl font-bold transition-all text-slate-400 hover:text-white border border-transparent";
-        }
-    });
-
-    if (tabId === 'archive') {
-        renderArchiveView();
-    }
-}
-
 function setCategory(cat) {
     playAudioTone(350, 'triangle', 0.04);
     selectedCategory = cat;
@@ -298,13 +306,14 @@ function setCategory(cat) {
 }
 
 // ------------------------------------------------------------------
-// منطق القائمة ومعالجة البيانات (تحديث العرض)
+// عرض القائمة (Home Page)
 // ------------------------------------------------------------------
 function renderApp() {
     const pendingList = document.getElementById('pending-list-container');
     const searchVal = document.getElementById('search-box').value.toLowerCase().trim();
     const filterVal = document.getElementById('category-filter').value;
 
+    if (!pendingList) return;
     pendingList.innerHTML = '';
 
     let totalSpent = 0;
@@ -321,16 +330,14 @@ function renderApp() {
                 const card = document.createElement('div');
                 card.className = "flex justify-between items-center bg-slate-900/80 border border-slate-800 p-3.5 rounded-2xl";
                 card.innerHTML = `
-                    <div class="flex flex-col gap-0.5">
+                    <div class="flex flex-col gap-0.5" onclick="openEditPage('${item.id}')">
                         <span class="text-xs font-bold text-white">${item.name}</span>
                         <span class="text-[9px] text-cyan-400 font-bold bg-cyan-500/10 border border-cyan-500/15 px-2 py-0.5 rounded-md w-fit">${item.category || '🛒 اخرى'}</span>
                     </div>
                     <div class="flex items-center gap-1.5">
                         <button onclick="markItemAsBought('${item.id}')" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black text-[10px] px-3.5 py-2.5 rounded-xl transition-all">شريت ✅</button>
-                        <button onclick="deleteItem('${item.id}')" class="text-rose-400 hover:bg-rose-500/10 p-2.5 rounded-xl border border-transparent hover:border-rose-500/15 transition-all">
-                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
+                        <button onclick="openEditPage('${item.id}')" class="bg-slate-800 text-slate-400 p-2.5 rounded-xl border border-slate-700">
+                            ✏️
                         </button>
                     </div>
                 `;
@@ -342,12 +349,8 @@ function renderApp() {
         }
     });
 
-    if (pendingList.children.length === 0) {
-        pendingList.innerHTML = `
-            <div class="text-center p-6 bg-slate-900/20 border border-slate-800/60 rounded-2xl">
-                <p class="text-[10px] text-slate-500">لا يوجد أغراض في قائمة المشتريات.</p>
-            </div>
-        `;
+    if (pendingCount === 0) {
+        pendingList.innerHTML = `<div class="text-center p-6 text-slate-500 text-[10px]">القائمة فارغة.</div>`;
     }
 
     document.getElementById('total-price').innerText = totalSpent.toLocaleString('ar-DZ') + ' دج';
@@ -361,20 +364,16 @@ function renderApp() {
 }
 
 // ------------------------------------------------------------------
-// نظام الأرشيف اليومي (مجمع حسب التاريخ والوقت)
+// عرض الأرشيف (Archive Page)
 // ------------------------------------------------------------------
 function renderArchiveView() {
     const container = document.getElementById('archive-days-container');
+    if (!container) return;
     container.innerHTML = '';
 
     const boughtItems = items.filter(i => i.bought);
     if (boughtItems.length === 0) {
-        container.innerHTML = `
-            <div class="text-center p-8 bg-slate-950/40 border border-slate-800 rounded-2xl">
-                <span class="text-3xl block">📦</span>
-                <p class="text-[10px] text-slate-500 font-bold mt-2">لا توجد أغراض تم شراؤها وأرشفتها حتى الآن.</p>
-            </div>
-        `;
+        container.innerHTML = `<div class="text-center p-8 text-slate-500 text-[10px]">الأرشيف فارغ.</div>`;
         return;
     }
 
@@ -397,61 +396,45 @@ function renderArchiveView() {
 
         groups[dayKey].forEach(item => {
             dayTotal += item.price;
-            const dateObj = new Date(item.time || Date.now());
-            const timeStr = dateObj.toLocaleTimeString('ar-DZ', { hour: '2-digit', minute: '2-digit' });
-
             itemsHtml += `
                 <div class="flex justify-between items-center bg-[#1c2541]/40 border border-slate-800 p-3 rounded-xl">
-                    <div class="flex flex-col gap-0.5">
+                    <div class="flex flex-col gap-0.5" onclick="openEditPage('${item.id}')">
                         <span class="text-xs font-bold text-slate-400 line-through">${item.name}</span>
                         <div class="flex items-center gap-1.5 text-[9px] text-slate-500 font-bold">
-                            <span class="text-emerald-400 bg-emerald-500/10 border border-emerald-400/20 px-1.5 py-0.5 rounded">${item.price} دج</span>
-                            <span>🕒 ${timeStr}</span>
-                            <span>• ${item.category || 'أخرى'}</span>
+                            <span class="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">${item.price} دج</span>
+                            <span>• ${item.category}</span>
                         </div>
                     </div>
-                    <button onclick="restoreItemToPending('${item.id}')" class="text-slate-500 hover:text-slate-300 p-2 rounded-xl transition-all" title="إرجاع للمشتريات">
-                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                        </svg>
-                    </button>
+                    <div class="flex items-center gap-1.5">
+                        <button onclick="restoreItemToPending('${item.id}')" class="text-slate-500 hover:text-slate-300 p-2">↩️</button>
+                        <button onclick="openEditPage('${item.id}')" class="text-slate-500 p-2">✏️</button>
+                    </div>
                 </div>
             `;
         });
 
         dayWrapper.innerHTML = `
             <div class="flex justify-between items-center border-b border-slate-800 pb-1.5 px-1 mt-2">
-                <span class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                    ${dayKey}
-                </span>
-                <span class="text-[9px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 rounded-md">المصروف اليومي: ${dayTotal} دج</span>
+                <span class="text-xs font-bold text-slate-300">${dayKey}</span>
+                <span class="text-[9px] font-black text-emerald-400">${dayTotal} دج</span>
             </div>
-            <div class="flex flex-col gap-1.5">
-                ${itemsHtml}
-            </div>
+            <div class="flex flex-col gap-1.5">${itemsHtml}</div>
         `;
-
         container.appendChild(dayWrapper);
     });
 }
 
 function formatDayKey(date) {
     const today = new Date();
+    if (date.toDateString() === today.toDateString()) return "اليوم";
     const yesterday = new Date();
     yesterday.setDate(today.getDate() - 1);
-
-    if (date.toDateString() === today.toDateString()) {
-        return "اليوم - " + date.toLocaleDateString('ar-DZ', { weekday: 'long', day: 'numeric', month: 'short' });
-    } else if (date.toDateString() === yesterday.toDateString()) {
-        return "أمس - " + date.toLocaleDateString('ar-DZ', { weekday: 'long', day: 'numeric', month: 'short' });
-    } else {
-        return date.toLocaleDateString('ar-DZ', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
-    }
+    if (date.toDateString() === yesterday.toDateString()) return "أمس";
+    return date.toLocaleDateString('ar-DZ', { day: 'numeric', month: 'short' });
 }
 
 // ------------------------------------------------------------------
-// إدارة العناصر والعمليات
+// إضافة وتعديل العناصر
 // ------------------------------------------------------------------
 async function addNewItem(nameValue = null, categoryValue = null) {
     playAudioTone(400, 'triangle', 0.05);
@@ -459,14 +442,10 @@ async function addNewItem(nameValue = null, categoryValue = null) {
     const name = nameValue || inputField.value.trim();
     const category = categoryValue || selectedCategory;
 
-    if (!name) {
-        showToast("الرجاء كتابة اسم الغرض أولاً!", "⚠️");
-        return;
-    }
+    if (!name) return;
 
-    const newId = Date.now().toString() + Math.random().toString(36).substr(2, 5);
     const newItem = {
-        id: newId,
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
         name: name,
         category: category,
         bought: false,
@@ -477,58 +456,45 @@ async function addNewItem(nameValue = null, categoryValue = null) {
     items.push(newItem);
     saveLocalItems();
     renderApp();
-
     await syncItemToCloud(newItem);
-
     if (!nameValue) inputField.value = '';
-    showToast(`تم إدراج "${name}" بنجاح!`, "✅");
+    showToast(`تمت إضافة ${name}`, "✅");
 }
 
-function handleNewItemKeyPress(e) {
-    if (e.key === 'Enter') {
-        addNewItem();
-    }
-}
+function handleNewItemKeyPress(e) { if (e.key === 'Enter') addNewItem(); }
 
-function markItemAsBought(id) {
-    playAudioTone(400, 'sine', 0.04);
-    currentActiveId = id;
+function openEditPage(id) {
     const item = items.find(i => i.id === id);
+    if (!item) return;
 
-    document.getElementById('modal-title').innerText = `شحال لقيت سعر: ${item.name}؟`;
-    document.getElementById('modal-price-input').value = '';
+    document.getElementById('edit-item-id').value = item.id;
+    document.getElementById('edit-item-name').value = item.name;
+    document.getElementById('edit-item-category').value = item.category || '🛒 اخرى';
+    document.getElementById('edit-item-price').value = item.price || 0;
+    document.getElementById('edit-item-bought').checked = item.bought;
 
-    const modal = document.getElementById('price-modal');
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-
-    setTimeout(() => {
-        document.getElementById('modal-price-input').focus();
-    }, 100);
+    navigateTo('edit');
 }
 
-function setQuickPrice(val) {
-    playAudioTone(350, 'sine', 0.03);
-    document.getElementById('modal-price-input').value = val;
-}
+async function saveItemChanges() {
+    const id = document.getElementById('edit-item-id').value;
+    const name = document.getElementById('edit-item-name').value.trim();
+    const category = document.getElementById('edit-item-category').value;
+    const price = parseFloat(document.getElementById('edit-item-price').value) || 0;
+    const bought = document.getElementById('edit-item-bought').checked;
 
-function closeBuyModal() {
-    playAudioTone(300, 'sine', 0.03);
-    const modal = document.getElementById('price-modal');
-    modal.classList.remove('flex');
-    modal.classList.add('hidden');
-    currentActiveId = null;
-}
-
-async function confirmBuyAction() {
-    const valInput = document.getElementById('modal-price-input').value;
-    const price = parseFloat(valInput) || 0;
-
-    const timeStamp = Date.now();
+    if (!name) return;
 
     items = items.map(item => {
-        if (item.id === currentActiveId) {
-            const updated = { ...item, bought: true, price: price, time: timeStamp };
+        if (item.id === id) {
+            const updated = {
+                ...item,
+                name: name,
+                category: category,
+                price: price,
+                bought: bought,
+                time: (bought && !item.bought) ? Date.now() : item.time
+            };
             syncItemToCloud(updated);
             return updated;
         }
@@ -536,22 +502,53 @@ async function confirmBuyAction() {
     });
 
     saveLocalItems();
+    showToast("تم حفظ التعديلات", "✅");
+    goBack();
+}
+
+async function deleteItemFromEdit() {
+    const id = document.getElementById('edit-item-id').value;
+    items = items.filter(i => i.id !== id);
+    saveLocalItems();
+    await deleteItemInCloud(id);
+    showToast("تم الحذف", "🧹");
+    goBack();
+}
+
+// ------------------------------------------------------------------
+// عمليات الشراء السريع
+// ------------------------------------------------------------------
+function markItemAsBought(id) {
+    currentActiveId = id;
+    const item = items.find(i => i.id === id);
+    document.getElementById('modal-title').innerText = `سعر ${item.name}؟`;
+    document.getElementById('modal-price-input').value = '';
+    document.getElementById('price-modal').classList.remove('hidden');
+    document.getElementById('price-modal').classList.add('flex');
+    document.getElementById('modal-price-input').focus();
+}
+
+function setQuickPrice(val) { document.getElementById('modal-price-input').value = val; }
+function closeBuyModal() { document.getElementById('price-modal').classList.add('hidden'); }
+
+async function confirmBuyAction() {
+    const price = parseFloat(document.getElementById('modal-price-input').value) || 0;
+    items = items.map(item => {
+        if (item.id === currentActiveId) {
+            const updated = { ...item, bought: true, price: price, time: Date.now() };
+            syncItemToCloud(updated);
+            return updated;
+        }
+        return item;
+    });
+    saveLocalItems();
     closeBuyModal();
     renderApp();
-
-    playChimeSoundSequence();
-
-    confetti({
-        particleCount: 40,
-        spread: 50,
-        origin: { y: 0.85 }
-    });
-
-    showToast("بصحتك الشريّة! ربي يباركلك فيها.", "🎉");
+    confetti({ particleCount: 40, spread: 50, origin: { y: 0.8 } });
+    showToast("بصحتك!", "🎉");
 }
 
 async function restoreItemToPending(id) {
-    playAudioTone(350, 'sine', 0.05);
     items = items.map(item => {
         if (item.id === id) {
             const updated = { ...item, bought: false, price: 0, time: 0 };
@@ -563,66 +560,16 @@ async function restoreItemToPending(id) {
     saveLocalItems();
     renderArchiveView();
     renderApp();
-    showToast("تم إلغاء شراء الغرض وإرجاعه للقائمة.", "↩️");
-}
-
-async function deleteItem(id) {
-    playAudioTone(300, 'sawtooth', 0.04);
-    const item = items.find(i => i.id === id);
-    items = items.filter(i => i.id !== id);
-    saveLocalItems();
-    renderApp();
-
-    await deleteItemInCloud(id);
-
-    showToast(`تم حذف: ${item ? item.name : 'الغرض'}`, "🧹");
-}
-
-function openResetModal() {
-    playAudioTone(250, 'sawtooth', 0.1);
-    const modal = document.getElementById('reset-modal');
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-}
-
-function closeResetModal() {
-    playAudioTone(300, 'sine', 0.03);
-    const modal = document.getElementById('reset-modal');
-    modal.classList.remove('flex');
-    modal.classList.add('hidden');
-}
-
-async function executeReset() {
-    playAudioTone(300, 'sine', 0.05);
-
-    if (db && auth && auth.currentUser) {
-        const uid = auth.currentUser.uid;
-        const collectionRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('items');
-        const snapshot = await collectionRef.get();
-        const batch = db.batch();
-        snapshot.forEach(doc => {
-            batch.delete(doc.ref);
-        });
-        await batch.commit();
-    }
-
-    items = [];
-    saveLocalItems();
-    closeResetModal();
-    renderApp();
-    showToast("تم تصفير القائمة وإعادة التهيئة الكاملة.", "🧹");
 }
 
 // ------------------------------------------------------------------
-// محرك مقترحات الذكاء الاصطناعي الذكي
+// محرك مقترحات الذكاء الاصطناعي الذكي (Gemini)
 // ------------------------------------------------------------------
 async function getAISuggestions() {
     playAudioTone(400, 'sine', 0.05);
-    const btn = document.getElementById('ai-gen-btn');
     const spinner = document.getElementById('ai-spinner');
     const container = document.getElementById('ai-suggestions-list');
 
-    btn.disabled = true;
     spinner.classList.remove('hidden');
 
     const aiPrompt = `أنت مساعد تسوق ذكي ومستشار Setup مخصص لمبرمجي الويب ومصممي الواجهات (UI/UX) في الجزائر.
@@ -641,232 +588,142 @@ async function getAISuggestions() {
         generationConfig: { responseMimeType: "application/json" }
     };
 
-    let attempts = 3;
-    let success = false;
-    let apiResult = null;
+    try {
+        const response = await fetch(apiEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
 
-    while (attempts > 0 && !success) {
-        try {
-            const response = await fetch(apiEndpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            if (response.ok) {
-                apiResult = await response.json();
-                success = true;
-            } else {
-                throw new Error();
-            }
-        } catch(e) {
-            attempts--;
-            if (attempts > 0) {
-                await new Promise(res => setTimeout(res, 1000));
-            }
-        }
-    }
-
-    if (success && apiResult) {
-        try {
+        if (response.ok) {
+            const apiResult = await response.json();
             const textResponse = apiResult.candidates?.[0]?.content?.parts?.[0]?.text;
             const parsed = JSON.parse(textResponse);
 
             container.innerHTML = '';
-            parsed.forEach((sug, i) => {
+            parsed.forEach((sug) => {
                 const sugCard = document.createElement('div');
-                sugCard.className = "bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex flex-col gap-2 relative overflow-hidden";
+                sugCard.className = "glass-card p-4 rounded-2xl flex flex-col gap-2 relative overflow-hidden";
                 sugCard.innerHTML = `
                     <div class="flex justify-between items-start">
                         <div class="flex flex-col">
                             <h5 class="text-xs font-black text-white">${sug.name}</h5>
-                            <span class="text-[9px] text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-full w-fit mt-1 font-bold">${sug.category}</span>
+                            <span class="text-[9px] text-purple-400 font-bold mt-1">${sug.category}</span>
                         </div>
                         <span class="text-xs font-black text-emerald-400 shrink-0">${sug.price} دج</span>
                     </div>
-                    <p class="text-[10px] text-slate-400 leading-relaxed">${sug.reason}</p>
-                    <button onclick="addAISugDirect('${sug.name.replace(/'/g, "\\'")}', '${sug.category}')" class="w-full bg-slate-950 border border-slate-800 hover:border-cyan-500/30 text-[10px] font-bold py-2 rounded-xl mt-1 text-slate-300 transition-all flex items-center justify-center gap-1.5">
-                        <span>➕</span> أضف لقائمة مشترياتي
+                    <p class="text-[10px] text-slate-400 leading-relaxed">${sug.reason || ''}</p>
+                    <button onclick="addAISugDirect('${sug.name.replace(/'/g, "\\'")}', '${sug.category}')" class="w-full bg-slate-900 border border-slate-800 text-[10px] font-bold py-2 rounded-xl mt-1 text-slate-300 transition-all">
+                        ➕ أضف للقائمة
                     </button>
                 `;
                 container.appendChild(sugCard);
             });
-            showToast("توليد ناجح! تم تحديث مقترحات الذكاء الاصطناعي.", "🧠");
-            playChimeSoundSequence();
-        } catch(e) {
-            console.error("Parse fail, falling back", e);
-            loadLocalAISuggestions();
+            showToast("تم تحديث مقترحات الذكاء الاصطناعي.", "🧠");
+        } else {
+            throw new Error();
         }
-    } else {
+    } catch(e) {
         loadLocalAISuggestions();
+    } finally {
+        spinner.classList.add('hidden');
     }
-
-    btn.disabled = false;
-    spinner.classList.add('hidden');
 }
 
 function loadLocalAISuggestions() {
     const localSugs = [
         { name: "Pudding PBT Keycaps ✨", price: 2400, category: "💻 عمل ومكتب", reason: "كابات مخصصة للكلافي لتوزيع إضاءة RGB سينمائي مذهل." },
-        { name: "ماوس باد مكتب XL مضادة للماء 🖱️", price: 1800, category: "💻 عمل ومكتب", reason: "مريحة جداً لمعصم اليد وتثبت حركة الماوس أثناء كود الـ CSS والديزاين." },
-        { name: "علبة قهوة Ben Rahim المختصة ☕", price: 1200, category: "🥩 اغذية", reason: "نكهة فاخرة ومحفز رهيب لزيادة التركيز وتجاوز الـ Bugs." },
-        { name: "شريط إضاءة LED ذكي خلف المكتب 💡", price: 1500, category: "💻 عمل ومكتب", reason: "يخلق بيئة إضاءة محيطية مريحة للعين في الغرف المظلمة." },
-        { name: "شاحن Baseus سريع 100W كابل متين 🔌", price: 3200, category: "💻 عمل ومكتب", reason: "لشحن اللابتوب والهاتف معاً في لمح البصر بجودة وموثوقية عالية." }
+        { name: "ماوس باد مكتب XL مضادة للماء 🖱️", price: 1800, category: "💻 عمل ومكتب", reason: "مريحة جداً لمعصم اليد وتثبت حركة الماوس." },
+        { name: "علبة قهوة مختصة ☕", price: 1200, category: "🥩 اغذية", reason: "نكهة فاخرة ومحفز رهيب لزيادة التركيز." }
     ];
 
     const container = document.getElementById('ai-suggestions-list');
     container.innerHTML = '';
     localSugs.forEach(sug => {
-        const sugCard = document.createElement('div');
-        sugCard.className = "bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex flex-col gap-2 relative overflow-hidden";
-        sugCard.innerHTML = `
-            <div class="flex justify-between items-start">
-                <div class="flex flex-col">
-                    <h5 class="text-xs font-black text-white">${sug.name}</h5>
-                    <span class="text-[9px] text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-full w-fit mt-1 font-bold">${sug.category}</span>
-                </div>
-                <span class="text-xs font-black text-emerald-400 shrink-0">${sug.price} دج</span>
+        const div = document.createElement('div');
+        div.className = "glass-card p-4 rounded-2xl flex flex-col gap-2";
+        div.innerHTML = `
+            <div class="flex justify-between items-center">
+                <div class="text-xs font-bold text-white">${sug.name}</div>
+                <div class="text-xs font-bold text-emerald-400">${sug.price} دج</div>
             </div>
-            <p class="text-[10px] text-slate-400 leading-relaxed">${sug.reason}</p>
-            <button onclick="addAISugDirect('${sug.name.replace(/'/g, "\\'")}', '${sug.category}')" class="w-full bg-slate-950 border border-slate-800 hover:border-cyan-500/30 text-[10px] font-bold py-2 rounded-xl mt-1 text-slate-300 transition-all flex items-center justify-center gap-1.5">
-                <span>➕</span> أضف لقائمة مشترياتي
-            </button>
+            <p class="text-[10px] text-slate-400">${sug.reason}</p>
+            <button onclick="addAISugDirect('${sug.name}', '${sug.category}')" class="bg-slate-900 text-slate-300 text-[10px] font-bold px-3 py-1.5 rounded-lg mt-1">إضافة</button>
         `;
-        container.appendChild(sugCard);
+        container.appendChild(div);
     });
-    showToast("تم توليد اقتراحات ذكية مخصصة للديزاينر مأخوذة محلياً 🧠", "✨");
 }
 
 function addAISugDirect(name, cat) {
     addNewItem(name, cat);
-    switchTab('shopping');
+    navigateTo('home');
 }
 
 // ------------------------------------------------------------------
-// نظام المشاركة والنسخ للحافظة
+// إعادة التهيئة
 // ------------------------------------------------------------------
-function shareShoppingSummary() {
-    playAudioTone(450, 'sine', 0.05);
-    let total = 0;
-    let shareText = "🛒 *ملخص قائمة مشترياتي الذكية PRO* 🇩🇿\n\n";
-
-    const pending = items.filter(i => !i.bought);
-    if (pending.length > 0) {
-        shareText += "📌 *صوالح مازال ما شريتهمش:*\n";
-        pending.forEach(i => shareText += `• ${i.name} (${i.category})\n`);
-    } else {
-        shareText += "📌 *صوالح مازال ما شريتهمش:* تم شراء واقتناء كل الأغراض! 🎉\n";
+function openResetModal() { document.getElementById('reset-modal').classList.remove('hidden'); document.getElementById('reset-modal').classList.add('flex'); }
+function closeResetModal() { document.getElementById('reset-modal').classList.add('hidden'); }
+async function executeReset() {
+    if (db && auth && auth.currentUser) {
+        const uid = auth.currentUser.uid;
+        const snapshot = await db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('items').get();
+        const batch = db.batch();
+        snapshot.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
     }
-
-    const bought = items.filter(i => i.bought);
-    if (bought.length > 0) {
-        shareText += "\n✅ *مشترياتي المؤرشفة اليومية:*\n";
-        const grouped = {};
-        bought.forEach(i => {
-            const date = new Date(i.time || Date.now());
-            const dKey = date.toLocaleDateString('ar-DZ', { day: 'numeric', month: 'short' });
-            if (!grouped[dKey]) grouped[dKey] = [];
-            grouped[dKey].push(i);
-        });
-
-        Object.keys(grouped).forEach(day => {
-            shareText += `*🗓️ يوم ${day}:*\n`;
-            grouped[day].forEach(i => {
-                shareText += `  - ${i.name} (${i.price} دج)\n`;
-                total += i.price;
-            });
-        });
-    } else {
-        shareText += "\n(لم يتم شراء أي صوالح بعد)\n";
-    }
-
-    shareText += `\n💰 *المجموع الإجمالي المصروف:* ${total} دج\n`;
-    shareText += "🛠️ _تمت المزامنة والأرشفة سحابياً عبر تطبيقي المطور_";
-
-    const helperArea = document.createElement("textarea");
-    helperArea.value = shareText;
-    helperArea.style.top = "0";
-    helperArea.style.left = "0";
-    helperArea.style.position = "fixed";
-    document.body.appendChild(helperArea);
-    helperArea.focus();
-    helperArea.select();
-
-    let result = false;
-    try {
-        result = document.execCommand('copy');
-    } catch(e) {
-        result = false;
-    }
-    document.body.removeChild(helperArea);
-
-    if (result) {
-        showToast("📋 تم نسخ ملخص المشتريات بالكامل! ارسله الآن لأصدقائك.", "✅");
-    } else {
-        showToast("⚠️ المتصفح منع النسخ التلقائي في الهاتف.", "❌");
-    }
+    items = [];
+    saveLocalItems();
+    closeResetModal();
+    renderApp();
+    renderArchiveView();
+    showToast("تم مسح كل البيانات", "🧹");
 }
 
 // ------------------------------------------------------------------
-// تركيب الأصوات (Audio Feedback)
-// ------------------------------------------------------------------
-let audioContextInstance = null;
-function playAudioTone(freq, type, duration) {
-    try {
-        if (!audioContextInstance) {
-            audioContextInstance = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        const osc = audioContextInstance.createOscillator();
-        const gain = audioContextInstance.createGain();
-        osc.type = type || 'sine';
-        osc.frequency.setValueAtTime(freq || 440, audioContextInstance.currentTime);
-        gain.gain.setValueAtTime(0.06, audioContextInstance.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, audioContextInstance.currentTime + duration);
-        osc.connect(gain);
-        gain.connect(audioContextInstance.destination);
-        osc.start();
-        osc.stop(audioContextInstance.currentTime + duration);
-    } catch (e) {}
-}
-
-function playChimeSoundSequence() {
-    playAudioTone(523.25, 'sine', 0.15); // C5
-    setTimeout(() => {
-        playAudioTone(659.25, 'sine', 0.15); // E5
-        setTimeout(() => {
-            playAudioTone(783.99, 'sine', 0.25); // G5
-        }, 80);
-    }, 80);
-}
-
-// ------------------------------------------------------------------
-// نظام التنبيهات (Toasts) وواجهة التحميل
+// خدمات مساعدة
 // ------------------------------------------------------------------
 function showToast(message, icon = "✨") {
     const toast = document.getElementById('toast-notif');
     document.getElementById('toast-icon').innerText = icon;
     document.getElementById('toast-msg').innerText = message;
-
     toast.classList.remove('-translate-y-24', 'opacity-0');
     toast.classList.add('translate-y-0', 'opacity-100');
-
     setTimeout(() => {
         toast.classList.add('-translate-y-24', 'opacity-0');
         toast.classList.remove('translate-y-0', 'opacity-100');
     }, 3000);
 }
 
-function bypassLoader() {
-    document.getElementById('safety-loader').style.display = 'none';
-    document.getElementById('main-app').style.display = 'flex';
-    loadLocalItems();
+let audioCtx = null;
+function playAudioTone(freq, type, duration) {
+    try {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type || 'sine';
+        osc.frequency.setValueAtTime(freq || 440, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+    } catch (e) {}
 }
 
-// ------------------------------------------------------------------
-// انطلاق التطبيق
-// ------------------------------------------------------------------
+function bypassLoader() {
+    document.getElementById('safety-loader').style.display = 'none';
+    loadLocalItems();
+    if (!currentUserId) navigateTo('home');
+}
+
 window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('safety-loader').style.display = 'none';
-    document.getElementById('main-app').style.display = 'flex';
-
     initFirebase();
 });
