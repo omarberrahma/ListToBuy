@@ -10,7 +10,7 @@ const realFirebaseConfig = {
     appId: "1:358300266390:web:36f6f2347929d66f4f37b7"
 };
 
-// متغيرات عالمية ومعالجة الأعطال لضمان الاستقرار
+// متغيرات عالمية لضمان استقرار التطبيق
 let db = null;
 let auth = null;
 let appId = "tobuylist-48f07";
@@ -20,13 +20,16 @@ let currentActiveId = null;
 let selectedCategory = "🛒 اخرى";
 let currentPage = "auth";
 let historyStack = [];
+let unsubsItems = null;
 
+// ------------------------------------------------------------------
+// تهيئة Firebase والتحقق من حالة المستخدم
+// ------------------------------------------------------------------
 function initFirebase() {
     try {
-        // تنظيف بقايا البيانات القديمة من الإصدارات السابقة
+        // تنظيف بقايا الإصدارات القديمة لضمان بداية نظيفة
         if (localStorage.getItem('shopping_items_mobile_v3')) {
             localStorage.removeItem('shopping_items_mobile_v3');
-            console.log("Legacy data removed.");
         }
 
         if (typeof firebase !== 'undefined') {
@@ -36,39 +39,157 @@ function initFirebase() {
             db = firebase.firestore();
             auth = firebase.auth();
 
-            // الاستماع لحالة تسجيل الدخول
+            // مراقبة حالة تسجيل الدخول (User Isolation Start)
             auth.onAuthStateChanged(async (user) => {
                 if (user) {
                     currentUserId = user.uid;
                     document.getElementById('user-name-display-home').innerText = `صوالح ${user.email ? user.email.split('@')[0] : 'المطور'}`;
 
-                    // تحميل ومراقبة العناصر لهذا المستخدم المسجل
+                    // تحميل قائمة المستخدم الخاصة برك
                     setupItemsListener();
 
                     if (currentPage === 'auth') {
                         navigateTo('home');
                     }
                 } else {
+                    // في حالة الخروج، تصفير البيانات والعودة لصفحة الدخول
                     currentUserId = null;
                     items = [];
+                    if (unsubsItems) unsubsItems();
                     renderApp();
                     navigateTo('auth');
                 }
             });
         } else {
-            console.log("Firebase SDK not loaded, using local storage.");
+            // وضع الضيف في حالة عدم توفر Firebase
             loadLocalItems();
             navigateTo('home');
         }
     } catch(e) {
-        console.error("Firebase startup issues handled:", e);
+        console.error("Firebase Init Error:", e);
         loadLocalItems();
-        navigateTo('home');
     }
 }
 
 // ------------------------------------------------------------------
-// نظام التنقل (Routing)
+// نظام المزامنة والخصوصية (User Isolation Logic)
+// ------------------------------------------------------------------
+
+/**
+ * الاستماع لتحديثات Firestore الخاصة بالمستخدم المسجل حالياً فقط
+ */
+function setupItemsListener() {
+    if (!db || !auth || !auth.currentUser) return;
+    const uid = auth.currentUser.uid;
+
+    if (unsubsItems) unsubsItems();
+
+    // المسار المصيري لضمان فصل البيانات: artifacts -> appId -> users -> uid -> items
+    const collectionRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('items');
+
+    unsubsItems = collectionRef.onSnapshot((snapshot) => {
+        const fetched = [];
+        snapshot.forEach(doc => {
+            fetched.push(doc.data());
+        });
+
+        if (fetched.length > 0) {
+            items = fetched;
+            saveLocalItems(); // حفظ نسخة محتياطية محلية معزولة
+            if (currentPage === 'home') renderApp();
+            if (currentPage === 'archive') renderArchiveView();
+        } else {
+            // إذا كانت قاعدة بيانات المستخدم في السحابة فارغة
+            loadLocalItems(); // تحميل البيانات المحلية إذا وجدت
+            if (items.length > 0) {
+                initUserDatabaseInCloud(uid); // رفعها للسحابة لأول مرة لهذا المستخدم
+            }
+        }
+    }, (error) => {
+        console.error("Firestore Listener Error:", error);
+        loadLocalItems();
+    });
+}
+
+/**
+ * تهيئة قاعدة بيانات المستخدم الجديد في السحابة
+ */
+async function initUserDatabaseInCloud(uid) {
+    if (!db) return;
+    const collectionRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('items');
+    const batch = db.batch();
+
+    items.forEach(item => {
+        const docRef = collectionRef.doc(item.id);
+        batch.set(docRef, item);
+    });
+
+    try {
+        await batch.commit();
+    } catch(e) {
+        console.error("Cloud Init Error:", e);
+    }
+}
+
+/**
+ * مزامنة غرض واحد مع مجلد المستخدم الخاص في السحابة
+ */
+async function syncItemToCloud(item) {
+    if (!db || !auth || !auth.currentUser) return;
+    try {
+        const uid = auth.currentUser.uid;
+        const docRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('items').doc(item.id);
+        await docRef.set(item, { merge: true });
+    } catch(e) {
+        console.error("Single Item Sync Error:", e);
+    }
+}
+
+/**
+ * حذف غرض من مجلد المستخدم الخاص في السحابة
+ */
+async function deleteItemInCloud(itemId) {
+    if (!db || !auth || !auth.currentUser) return;
+    try {
+        const uid = auth.currentUser.uid;
+        const docRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('items').doc(itemId);
+        await docRef.delete();
+    } catch(e) {
+        console.error("Item Delete Error:", e);
+    }
+}
+
+// ------------------------------------------------------------------
+// نظام التخزين المحلي المعزول (LocalStorage Isolation)
+// ------------------------------------------------------------------
+
+function getStorageKey() {
+    // استعمال الـ uid في مفتاح التخزين لضمان عدم اختلاط البيانات محلياً
+    return currentUserId ? `items_v4_${currentUserId}` : 'items_guest_v4';
+}
+
+function loadLocalItems() {
+    const key = getStorageKey();
+    const cached = localStorage.getItem(key);
+    if (cached) {
+        try {
+            items = JSON.parse(cached);
+        } catch(err) {
+            items = [];
+        }
+    } else {
+        items = [];
+    }
+    renderApp();
+}
+
+function saveLocalItems() {
+    const key = getStorageKey();
+    localStorage.setItem(key, JSON.stringify(items));
+}
+
+// ------------------------------------------------------------------
+// نظام التنقل (Routing System)
 // ------------------------------------------------------------------
 function navigateTo(pageId, addToHistory = true) {
     if (addToHistory && currentPage !== pageId) {
@@ -77,32 +198,23 @@ function navigateTo(pageId, addToHistory = true) {
     }
 
     currentPage = pageId;
-
-    // إخفاء كل الصفحات
     document.querySelectorAll('.page-section').forEach(p => p.classList.add('hidden'));
 
-    // إظهار الصفحة المطلوبة
     const targetPage = document.getElementById(`page-${pageId}`);
-    if (targetPage) {
-        targetPage.classList.remove('hidden');
-    }
+    if (targetPage) targetPage.classList.remove('hidden');
 
-    // التحكم في شريط التنقل السفلي
     const nav = document.getElementById('bottom-nav');
-    if (!nav) return;
-    if (pageId === 'auth' || pageId === 'edit') {
-        nav.classList.add('hidden');
-    } else {
-        nav.classList.remove('hidden');
+    if (nav) {
+        if (pageId === 'auth' || pageId === 'edit') {
+            nav.classList.add('hidden');
+        } else {
+            nav.classList.remove('hidden');
+        }
     }
 
-    // تحديث شكل أزرار التنقل
     updateNavButtons(pageId);
-
-    // تنفيذ عمليات خاصة بالصفحة
     if (pageId === 'home') renderApp();
     if (pageId === 'archive') renderArchiveView();
-
     window.scrollTo(0, 0);
 }
 
@@ -139,106 +251,7 @@ function goBack() {
 }
 
 // ------------------------------------------------------------------
-// نظام تخزين واسترجاع العناصر محلياً (مع عزل البيانات)
-// ------------------------------------------------------------------
-function getStorageKey() {
-    return currentUserId ? `items_${currentUserId}` : 'items_guest';
-}
-
-function loadLocalItems() {
-    const key = getStorageKey();
-    const cached = localStorage.getItem(key);
-    if (cached) {
-        try {
-            items = JSON.parse(cached);
-        } catch(err) {
-            items = [];
-        }
-    } else {
-        items = [];
-    }
-    renderApp();
-}
-
-function saveLocalItems() {
-    const key = getStorageKey();
-    localStorage.setItem(key, JSON.stringify(items));
-}
-
-// ------------------------------------------------------------------
-// مزامنة Firestore
-// ------------------------------------------------------------------
-let unsubsItems = null;
-function setupItemsListener() {
-    if (!db || !auth || !auth.currentUser) return;
-    const uid = auth.currentUser.uid;
-
-    if (unsubsItems) unsubsItems();
-
-    const collectionRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('items');
-
-    unsubsItems = collectionRef.onSnapshot((snapshot) => {
-        const fetched = [];
-        snapshot.forEach(doc => {
-            fetched.push(doc.data());
-        });
-
-        if (fetched.length > 0) {
-            items = fetched;
-            saveLocalItems();
-            if (currentPage === 'home') renderApp();
-            if (currentPage === 'archive') renderArchiveView();
-        } else {
-            // إذا كانت السحابة فارغة لهذا المستخدم
-            // إذا كان هناك عناصر في الذاكرة (مثلاً من وضع الضيف قبل تسجيل الدخول)، نرفعها
-            if (items.length > 0) {
-                saveLocalItems();
-                initUserDatabaseInCloud(uid);
-            } else {
-                // وإلا نحاول تحميل البيانات المحلية الخاصة بهذا المستخدم
-                loadLocalItems();
-                if (items.length > 0) {
-                    initUserDatabaseInCloud(uid);
-                }
-            }
-        }
-    }, (error) => {
-        console.error("Cloud listening failed:", error);
-        loadLocalItems();
-    });
-}
-
-async function initUserDatabaseInCloud(uid) {
-    if (!db) return;
-    const collectionRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('items');
-    const batch = db.batch();
-    items.forEach(item => {
-        const docRef = collectionRef.doc(item.id);
-        batch.set(docRef, item);
-    });
-    try { await batch.commit(); } catch(e) {}
-}
-
-async function syncItemToCloud(item) {
-    if (!db || !auth || !auth.currentUser) return;
-    try {
-        const uid = auth.currentUser.uid;
-        const docRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('items').doc(item.id);
-        await docRef.set(item, { merge: true });
-    } catch(e) {}
-}
-
-async function deleteItemInCloud(itemId) {
-    if (!db || !auth || !auth.currentUser) return;
-    try {
-        const uid = auth.currentUser.uid;
-        const docRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('items').doc(itemId);
-        await docRef.delete();
-    } catch(e) {}
-}
-
-// ------------------------------------------------------------------
-// عمليات التوثيق
+// عمليات التوثيق (Auth Operations)
 // ------------------------------------------------------------------
 async function loginUser() {
     playAudioTone(250, 'triangle', 0.05);
@@ -257,7 +270,7 @@ async function loginUser() {
             showToast("تم الدخول بنجاح!", "🎉");
         }
     } catch(e) {
-        showToast("خطأ في تسجيل الدخول. تأكد من البيانات.", "❌");
+        showToast("خطأ في تسجيل الدخول. تأكد من بياناتك.", "❌");
     }
 }
 
@@ -271,7 +284,7 @@ async function registerUser() {
         return;
     }
     if (passInp.length < 6) {
-        showToast("الكود السري يجب أن يكون 6 خانات فأكثر.", "⚠️");
+        showToast("الكود السري لازم يكون فيه 6 خانات أو أكثر.", "⚠️");
         return;
     }
 
@@ -282,7 +295,7 @@ async function registerUser() {
             showToast("تم إنشاء الحساب بنجاح!", "✨");
         }
     } catch(e) {
-        showToast("فشل إنشاء الحساب. قد يكون الاسم مستخدماً.", "❌");
+        showToast("فشل إنشاء الحساب. جرب اسم مستخدم آخر.", "❌");
     }
 }
 
@@ -291,18 +304,17 @@ async function logoutUser() {
     if (unsubsItems) unsubsItems();
     if (auth) {
         await auth.signOut();
-        showToast("تم تسجيل الخروج.", "🚪");
+        showToast("تم تسجيل الخروج بنجاح.", "🚪");
     }
 }
 
 // ------------------------------------------------------------------
-// إدارة الفئات (Categories)
+// إدارة القائمة والأغراض (Items Management)
 // ------------------------------------------------------------------
 function setCategory(cat) {
     playAudioTone(350, 'triangle', 0.04);
     selectedCategory = cat;
-    const btns = document.querySelectorAll('.cat-tag-btn');
-    btns.forEach(btn => {
+    document.querySelectorAll('.cat-tag-btn').forEach(btn => {
         if (btn.innerText.includes(cat.split(' ')[1])) {
             btn.className = "cat-tag-btn bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-bold px-2.5 py-1.5 rounded-lg";
         } else {
@@ -311,20 +323,15 @@ function setCategory(cat) {
     });
 }
 
-// ------------------------------------------------------------------
-// عرض القائمة (Home Page)
-// ------------------------------------------------------------------
 function renderApp() {
     const pendingList = document.getElementById('pending-list-container');
+    if (!pendingList) return;
+
     const searchVal = document.getElementById('search-box').value.toLowerCase().trim();
     const filterVal = document.getElementById('category-filter').value;
 
-    if (!pendingList) return;
     pendingList.innerHTML = '';
-
-    let totalSpent = 0;
-    let pendingCount = 0;
-    let boughtCount = 0;
+    let totalSpent = 0, pendingCount = 0, boughtCount = 0;
 
     items.forEach(item => {
         const matchesSearch = item.name.toLowerCase().includes(searchVal);
@@ -342,9 +349,7 @@ function renderApp() {
                     </div>
                     <div class="flex items-center gap-1.5">
                         <button onclick="markItemAsBought('${item.id}')" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black text-[10px] px-3.5 py-2.5 rounded-xl transition-all">شريت ✅</button>
-                        <button onclick="openEditPage('${item.id}')" class="bg-slate-800 text-slate-400 p-2.5 rounded-xl border border-slate-700">
-                            ✏️
-                        </button>
+                        <button onclick="openEditPage('${item.id}')" class="bg-slate-800 text-slate-400 p-2.5 rounded-xl border border-slate-700">✏️</button>
                     </div>
                 `;
                 pendingList.appendChild(card);
@@ -356,7 +361,7 @@ function renderApp() {
     });
 
     if (pendingCount === 0) {
-        pendingList.innerHTML = `<div class="text-center p-6 text-slate-500 text-[10px]">القائمة فارغة.</div>`;
+        pendingList.innerHTML = `<div class="text-center p-6 text-slate-500 text-[10px]">القائمة فارغة، أضف صوالحك الآن!</div>`;
     }
 
     document.getElementById('total-price').innerText = totalSpent.toLocaleString('ar-DZ') + ' دج';
@@ -365,13 +370,12 @@ function renderApp() {
 
     const totalCount = items.length;
     const progressPercent = totalCount > 0 ? Math.round((boughtCount / totalCount) * 100) : 0;
-    document.getElementById('progress-bar').style.width = progressPercent + '%';
-    document.getElementById('progress-text').innerText = progressPercent + '%';
+    const progressBar = document.getElementById('progress-bar');
+    if (progressBar) progressBar.style.width = progressPercent + '%';
+    const progressText = document.getElementById('progress-text');
+    if (progressText) progressText.innerText = progressPercent + '%';
 }
 
-// ------------------------------------------------------------------
-// عرض الأرشيف (Archive Page)
-// ------------------------------------------------------------------
 function renderArchiveView() {
     const container = document.getElementById('archive-days-container');
     if (!container) return;
@@ -379,12 +383,11 @@ function renderArchiveView() {
 
     const boughtItems = items.filter(i => i.bought);
     if (boughtItems.length === 0) {
-        container.innerHTML = `<div class="text-center p-8 text-slate-500 text-[10px]">الأرشيف فارغ.</div>`;
+        container.innerHTML = `<div class="text-center p-8 text-slate-500 text-[10px]">لا يوجد أرشيف مشتريات بعد.</div>`;
         return;
     }
 
     boughtItems.sort((a, b) => (b.time || 0) - (a.time || 0));
-
     const groups = {};
     boughtItems.forEach(item => {
         const date = new Date(item.time || Date.now());
@@ -396,9 +399,7 @@ function renderArchiveView() {
     Object.keys(groups).forEach(dayKey => {
         const dayWrapper = document.createElement('div');
         dayWrapper.className = "flex flex-col gap-2";
-
-        let dayTotal = 0;
-        let itemsHtml = '';
+        let dayTotal = 0, itemsHtml = '';
 
         groups[dayKey].forEach(item => {
             dayTotal += item.price;
@@ -439,9 +440,6 @@ function formatDayKey(date) {
     return date.toLocaleDateString('ar-DZ', { day: 'numeric', month: 'short' });
 }
 
-// ------------------------------------------------------------------
-// إضافة وتعديل العناصر
-// ------------------------------------------------------------------
 async function addNewItem(nameValue = null, categoryValue = null) {
     playAudioTone(400, 'triangle', 0.05);
     const inputField = document.getElementById('new-item-input');
@@ -464,7 +462,7 @@ async function addNewItem(nameValue = null, categoryValue = null) {
     renderApp();
     await syncItemToCloud(newItem);
     if (!nameValue) inputField.value = '';
-    showToast(`تمت إضافة ${name}`, "✅");
+    showToast(`تمت إضافة: ${name}`, "✅");
 }
 
 function handleNewItemKeyPress(e) { if (e.key === 'Enter') addNewItem(); }
@@ -472,13 +470,11 @@ function handleNewItemKeyPress(e) { if (e.key === 'Enter') addNewItem(); }
 function openEditPage(id) {
     const item = items.find(i => i.id === id);
     if (!item) return;
-
     document.getElementById('edit-item-id').value = item.id;
     document.getElementById('edit-item-name').value = item.name;
     document.getElementById('edit-item-category').value = item.category || '🛒 اخرى';
     document.getElementById('edit-item-price').value = item.price || 0;
     document.getElementById('edit-item-bought').checked = item.bought;
-
     navigateTo('edit');
 }
 
@@ -493,14 +489,7 @@ async function saveItemChanges() {
 
     items = items.map(item => {
         if (item.id === id) {
-            const updated = {
-                ...item,
-                name: name,
-                category: category,
-                price: price,
-                bought: bought,
-                time: (bought && !item.bought) ? Date.now() : item.time
-            };
+            const updated = { ...item, name, category, price, bought, time: (bought && !item.bought) ? Date.now() : item.time };
             syncItemToCloud(updated);
             return updated;
         }
@@ -508,7 +497,7 @@ async function saveItemChanges() {
     });
 
     saveLocalItems();
-    showToast("تم حفظ التعديلات", "✅");
+    showToast("تم الحفظ بنجاح", "✅");
     goBack();
 }
 
@@ -521,13 +510,10 @@ async function deleteItemFromEdit() {
     goBack();
 }
 
-// ------------------------------------------------------------------
-// عمليات الشراء السريع
-// ------------------------------------------------------------------
 function markItemAsBought(id) {
     currentActiveId = id;
     const item = items.find(i => i.id === id);
-    document.getElementById('modal-title').innerText = `سعر ${item.name}؟`;
+    document.getElementById('modal-title').innerText = `شحال لقيت سعر: ${item.name}؟`;
     document.getElementById('modal-price-input').value = '';
     document.getElementById('price-modal').classList.remove('hidden');
     document.getElementById('price-modal').classList.add('flex');
@@ -541,7 +527,7 @@ async function confirmBuyAction() {
     const price = parseFloat(document.getElementById('modal-price-input').value) || 0;
     items = items.map(item => {
         if (item.id === currentActiveId) {
-            const updated = { ...item, bought: true, price: price, time: Date.now() };
+            const updated = { ...item, bought: true, price, time: Date.now() };
             syncItemToCloud(updated);
             return updated;
         }
@@ -550,8 +536,8 @@ async function confirmBuyAction() {
     saveLocalItems();
     closeBuyModal();
     renderApp();
-    confetti({ particleCount: 40, spread: 50, origin: { y: 0.8 } });
-    showToast("بصحتك!", "🎉");
+    if (typeof confetti === 'function') confetti({ particleCount: 40, spread: 50, origin: { y: 0.8 } });
+    showToast("بصحتك الشريّة!", "🎉");
 }
 
 async function restoreItemToPending(id) {
@@ -569,48 +555,35 @@ async function restoreItemToPending(id) {
 }
 
 // ------------------------------------------------------------------
-// محرك مقترحات الذكاء الاصطناعي الذكي (Gemini)
+// محرك مقترحات الذكاء الاصطناعي (AI Engine)
 // ------------------------------------------------------------------
 async function getAISuggestions() {
     playAudioTone(400, 'sine', 0.05);
     const spinner = document.getElementById('ai-spinner');
     const container = document.getElementById('ai-suggestions-list');
+    if (spinner) spinner.classList.remove('hidden');
 
-    spinner.classList.remove('hidden');
+    const aiPrompt = `أنت مساعد تسوق ذكي ومستشار Setup مخصص لمبرمجي الويب ومصممي الواجهات في الجزائر.
+اقترح 5 أغراض قيمة لمكتبهم أو حياتهم اليومية مع الثمن التقريبي بالدج.
+أجب حصراً بصيغة JSON كأنه مصفوفة كائنات: [{"name": "...", "price": 0, "category": "...", "reason": "..."}]`;
 
-    const aiPrompt = `أنت مساعد تسوق ذكي ومستشار Setup مخصص لمبرمجي الويب ومصممي الواجهات (UI/UX) في الجزائر.
-اقترح 5 أغراض قيمة ومفيدة لإنتاجيتهم وجودة عملهم (أدوات كروت شاشات، كابلات جودة، إضاءة مكتبية، كابات كيبورد، قهوة جزائرية ممتازة للتركيز، سويتشر، هاد باون، إلخ) مع إبراز ثمنها التقريبي بالدينار الجزائري (دج).
-يجب أن ترجع الإجابة حصراً بصيغة JSON على شكل مصفوفة كائنات كما في هذا المثال، دون أي نصوص تمهيدية أو ختامية أو علامات ماركداون:
-[
-  {"name": "حامل شاشة معدني هيدروليكي", "price": 4500, "category": "💻 عمل ومكتب", "reason": "لرفع الشاشة وتحسين راحة الرقبة للمبرمج."},
-  {"name": "بن لافازا إسبراسو 1كغ", "price": 1800, "category": "🥩 اغذية", "reason": "سر المبرمجين الجزائريين في ليالي البرمجة الطويلة."}
-]`;
-
-    const apiKey = ""; // مفتاح API فارغ للبيئات التي تدمجه تلقائياً
-    const apiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`;
-
-    const payload = {
-        contents: [{ parts: [{ text: aiPrompt }] }],
-        generationConfig: { responseMimeType: "application/json" }
-    };
+    const apiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=`; // Gemini API
 
     try {
         const response = await fetch(apiEndpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify({ contents: [{ parts: [{ text: aiPrompt }] }], generationConfig: { responseMimeType: "application/json" } })
         });
 
         if (response.ok) {
-            const apiResult = await response.json();
-            const textResponse = apiResult.candidates?.[0]?.content?.parts?.[0]?.text;
-            const parsed = JSON.parse(textResponse);
-
+            const result = await response.json();
+            const parsed = JSON.parse(result.candidates?.[0]?.content?.parts?.[0]?.text);
             container.innerHTML = '';
-            parsed.forEach((sug) => {
-                const sugCard = document.createElement('div');
-                sugCard.className = "glass-card p-4 rounded-2xl flex flex-col gap-2 relative overflow-hidden";
-                sugCard.innerHTML = `
+            parsed.forEach(sug => {
+                const card = document.createElement('div');
+                card.className = "glass-card p-4 rounded-2xl flex flex-col gap-2 relative overflow-hidden";
+                card.innerHTML = `
                     <div class="flex justify-between items-start">
                         <div class="flex flex-col">
                             <h5 class="text-xs font-black text-white">${sug.name}</h5>
@@ -619,40 +592,30 @@ async function getAISuggestions() {
                         <span class="text-xs font-black text-emerald-400 shrink-0">${sug.price} دج</span>
                     </div>
                     <p class="text-[10px] text-slate-400 leading-relaxed">${sug.reason || ''}</p>
-                    <button onclick="addAISugDirect('${sug.name.replace(/'/g, "\\'")}', '${sug.category}')" class="w-full bg-slate-900 border border-slate-800 text-[10px] font-bold py-2 rounded-xl mt-1 text-slate-300 transition-all">
-                        ➕ أضف للقائمة
-                    </button>
+                    <button onclick="addAISugDirect('${sug.name.replace(/'/g, "\\'")}', '${sug.category}')" class="w-full bg-slate-900 border border-slate-800 text-[10px] font-bold py-2 rounded-xl mt-1 text-slate-300 transition-all">➕ أضف للقائمة</button>
                 `;
-                container.appendChild(sugCard);
+                container.appendChild(card);
             });
-            showToast("تم تحديث مقترحات الذكاء الاصطناعي.", "🧠");
-        } else {
-            throw new Error();
-        }
-    } catch(e) {
-        loadLocalAISuggestions();
-    } finally {
-        spinner.classList.add('hidden');
-    }
+            showToast("مقترحات ذكية جاهزة!", "🧠");
+        } else { throw new Error(); }
+    } catch(e) { loadLocalAISuggestions(); }
+    finally { if (spinner) spinner.classList.add('hidden'); }
 }
 
 function loadLocalAISuggestions() {
     const localSugs = [
-        { name: "Pudding PBT Keycaps ✨", price: 2400, category: "💻 عمل ومكتب", reason: "كابات مخصصة للكلافي لتوزيع إضاءة RGB سينمائي مذهل." },
+        { name: "Pudding PBT Keycaps ✨", price: 2400, category: "💻 عمل ومكتب", reason: "كابات مخصصة للكلافي لتوزيع إضاءة RGB مذهل." },
         { name: "ماوس باد مكتب XL مضادة للماء 🖱️", price: 1800, category: "💻 عمل ومكتب", reason: "مريحة جداً لمعصم اليد وتثبت حركة الماوس." },
         { name: "علبة قهوة مختصة ☕", price: 1200, category: "🥩 اغذية", reason: "نكهة فاخرة ومحفز رهيب لزيادة التركيز." }
     ];
-
     const container = document.getElementById('ai-suggestions-list');
+    if (!container) return;
     container.innerHTML = '';
     localSugs.forEach(sug => {
         const div = document.createElement('div');
         div.className = "glass-card p-4 rounded-2xl flex flex-col gap-2";
         div.innerHTML = `
-            <div class="flex justify-between items-center">
-                <div class="text-xs font-bold text-white">${sug.name}</div>
-                <div class="text-xs font-bold text-emerald-400">${sug.price} دج</div>
-            </div>
+            <div class="flex justify-between items-center"><div class="text-xs font-bold text-white">${sug.name}</div><div class="text-xs font-bold text-emerald-400">${sug.price} دج</div></div>
             <p class="text-[10px] text-slate-400">${sug.reason}</p>
             <button onclick="addAISugDirect('${sug.name}', '${sug.category}')" class="bg-slate-900 text-slate-300 text-[10px] font-bold px-3 py-1.5 rounded-lg mt-1">إضافة</button>
         `;
@@ -660,44 +623,49 @@ function loadLocalAISuggestions() {
     });
 }
 
-function addAISugDirect(name, cat) {
-    addNewItem(name, cat);
-    navigateTo('home');
-}
+function addAISugDirect(name, cat) { addNewItem(name, cat); navigateTo('home'); }
 
 // ------------------------------------------------------------------
-// إعادة التهيئة
+// إدارة البيانات الشاملة (Data Management)
 // ------------------------------------------------------------------
-function openResetModal() { document.getElementById('reset-modal').classList.remove('hidden'); document.getElementById('reset-modal').classList.add('flex'); }
-function closeResetModal() { document.getElementById('reset-modal').classList.add('hidden'); }
+function openResetModal() {
+    const modal = document.getElementById('reset-modal');
+    if (modal) { modal.classList.remove('hidden'); modal.classList.add('flex'); }
+}
+function closeResetModal() {
+    const modal = document.getElementById('reset-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+/**
+ * إعادة تهيئة التطبيق ومسح بيانات المستخدم الحالي فقط لضمان الخصوصية
+ */
 async function executeReset() {
-    // التأكد من أن المسح يتم فقط للمستخدم المسجل الحالي
     if (db && auth && auth.currentUser) {
         const uid = auth.currentUser.uid;
+        // استهداف مسار المستخدم الخاص بدقة
         const snapshot = await db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('items').get();
         const batch = db.batch();
         snapshot.forEach(doc => batch.delete(doc.ref));
         await batch.commit();
-
-        // مسح الذاكرة المحلية الخاصة بهذا المستخدم أيضاً
-        localStorage.removeItem(`items_${uid}`);
+        localStorage.removeItem(`items_v4_${uid}`);
     } else {
-        // مسح بيانات الضيف
-        localStorage.removeItem('items_guest');
+        localStorage.removeItem('items_guest_v4');
     }
 
     items = [];
     closeResetModal();
     renderApp();
     renderArchiveView();
-    showToast("تم مسح كل البيانات الخاصة بك", "🧹");
+    showToast("تم تصفير بياناتك بنجاح.", "🧹");
 }
 
 // ------------------------------------------------------------------
-// خدمات مساعدة
+// وظائف المساعدة (Utility Functions)
 // ------------------------------------------------------------------
 function showToast(message, icon = "✨") {
     const toast = document.getElementById('toast-notif');
+    if (!toast) return;
     document.getElementById('toast-icon').innerText = icon;
     document.getElementById('toast-msg').innerText = message;
     toast.classList.remove('-translate-y-24', 'opacity-0');
@@ -711,12 +679,8 @@ function showToast(message, icon = "✨") {
 let audioCtx = null;
 function playAudioTone(freq, type, duration) {
     try {
-        if (!audioCtx) {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        if (audioCtx.state === 'suspended') {
-            audioCtx.resume();
-        }
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.type = type || 'sine';
@@ -731,12 +695,14 @@ function playAudioTone(freq, type, duration) {
 }
 
 function bypassLoader() {
-    document.getElementById('safety-loader').style.display = 'none';
+    const loader = document.getElementById('safety-loader');
+    if (loader) loader.style.display = 'none';
     loadLocalItems();
     if (!currentUserId) navigateTo('home');
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('safety-loader').style.display = 'none';
+    const loader = document.getElementById('safety-loader');
+    if (loader) loader.style.display = 'none';
     initFirebase();
 });
