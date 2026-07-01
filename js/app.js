@@ -23,6 +23,12 @@ let historyStack = [];
 
 function initFirebase() {
     try {
+        // تنظيف بقايا البيانات القديمة من الإصدارات السابقة
+        if (localStorage.getItem('shopping_items_mobile_v3')) {
+            localStorage.removeItem('shopping_items_mobile_v3');
+            console.log("Legacy data removed.");
+        }
+
         if (typeof firebase !== 'undefined') {
             if (!firebase.apps.length) {
                 firebase.initializeApp(realFirebaseConfig);
@@ -665,19 +671,26 @@ function addAISugDirect(name, cat) {
 function openResetModal() { document.getElementById('reset-modal').classList.remove('hidden'); document.getElementById('reset-modal').classList.add('flex'); }
 function closeResetModal() { document.getElementById('reset-modal').classList.add('hidden'); }
 async function executeReset() {
+    // التأكد من أن المسح يتم فقط للمستخدم المسجل الحالي
     if (db && auth && auth.currentUser) {
         const uid = auth.currentUser.uid;
         const snapshot = await db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('items').get();
         const batch = db.batch();
         snapshot.forEach(doc => batch.delete(doc.ref));
         await batch.commit();
+
+        // مسح الذاكرة المحلية الخاصة بهذا المستخدم أيضاً
+        localStorage.removeItem(`items_${uid}`);
+    } else {
+        // مسح بيانات الضيف
+        localStorage.removeItem('items_guest');
     }
+
     items = [];
-    saveLocalItems();
     closeResetModal();
     renderApp();
     renderArchiveView();
-    showToast("تم مسح كل البيانات", "🧹");
+    showToast("تم مسح كل البيانات الخاصة بك", "🧹");
 }
 
 // ------------------------------------------------------------------
