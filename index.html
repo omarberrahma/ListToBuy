@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="bg-[#0b1329]">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>قائمة مشترياتي الذكية 🛒</title>
+
+    <!-- إعدادات PWA -->
+    <meta name="theme-color" content="#0b132b">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+    <!-- Tailwind CSS (تحميل آمن) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+    <!-- Firebase SDKs (v8 compat) -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+    <!-- الملفات الخارجية -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="min-h-screen flex flex-col items-center pb-20 select-none">
+
+    <!-- واجهة التحميل (Safety Loader) -->
+    <div id="safety-loader" class="fixed inset-0 bg-[#0b132b] z-50 flex flex-col items-center justify-center p-6 text-center">
+        <div class="w-12 h-12 border-4 border-cyan-400 border-t-transparent rounded-full animate-spin mb-4"></div>
+        <h2 class="text-lg font-bold text-white">جاري تحميل التطبيق الذكي...</h2>
+        <p class="text-xs text-slate-400 mt-2">إذا طال الانتظار، اضغط على زر التحديث أو تصفح في وضع الأمان</p>
+        <button onclick="bypassLoader()" class="mt-4 bg-cyan-500 hover:bg-cyan-600 text-[#0b132b] text-xs font-bold py-2 px-4 rounded-xl transition-all">تخطي وتشغيل محلي</button>
+    </div>
+
+    <!-- نظام التنبيهات (Toast) -->
+    <div id="toast-notif" class="fixed top-4 left-4 right-4 md:left-auto md:right-4 md:w-80 z-50 transform -translate-y-24 opacity-0 transition-all duration-300 pointer-events-none bg-slate-900/95 border border-slate-700/80 p-3.5 rounded-2xl shadow-2xl flex items-center gap-3">
+        <div class="text-lg bg-slate-800 p-1.5 rounded-xl" id="toast-icon">✨</div>
+        <div class="text-xs font-bold text-slate-200" id="toast-msg">تم التحديث بنجاح!</div>
+    </div>
+
+    <!-- الحاوية الرئيسية للتطبيق -->
+    <main class="w-full max-w-md px-4 flex flex-col gap-5 mt-4" id="main-app" style="display: none;">
+
+        <!-- ترويسة التطبيق -->
+        <header class="glass-card rounded-3xl p-5 shadow-2xl relative overflow-hidden">
+            <div class="absolute -right-8 -bottom-8 w-24 h-24 bg-cyan-500/10 rounded-full blur-xl pointer-events-none"></div>
+            <div class="flex justify-between items-center relative z-10">
+                <div>
+                    <span class="text-[10px] font-bold text-cyan-400 uppercase tracking-widest bg-cyan-900/40 px-2.5 py-1 rounded-full border border-cyan-500/20">تطبيق تفاعلي 🇩🇿</span>
+                    <h1 class="text-xl font-black mt-2 text-white">قائمة مشترياتي الذكية PRO</h1>
+                    <p class="text-[10px] text-slate-400 mt-0.5">مخصصة لمطوري الويب والمصممين في الجزائر</p>
+                </div>
+                <span class="text-3xl">🛒</span>
+            </div>
+        </header>
+
+        <!-- قسم التوثيق / حالة المزامنة السحابية -->
+        <section id="auth-panel" class="glass-card rounded-3xl p-5 shadow-lg flex flex-col gap-4">
+            <div class="flex justify-between items-center">
+                <h3 class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+                    حساب السحابة وقاعدة البيانات
+                </h3>
+                <span id="sync-status" class="text-[9px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md">حفظ محلي فقط 💾</span>
+            </div>
+
+            <!-- مدخلات تسجيل الدخول -->
+            <div id="auth-inputs-container" class="flex flex-col gap-3">
+                <div class="grid grid-cols-2 gap-2">
+                    <input type="text" id="username" class="bg-slate-900/90 border border-slate-800 focus:border-cyan-500 rounded-xl px-3 py-2.5 text-xs text-white outline-none placeholder:text-slate-500" placeholder="اسم المستخدم">
+                    <input type="password" id="password" class="bg-slate-900/90 border border-slate-800 focus:border-cyan-500 rounded-xl px-3 py-2.5 text-xs text-white outline-none placeholder:text-slate-500" placeholder="الكود السري">
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="loginUser()" class="bg-cyan-500 hover:bg-cyan-600 text-slate-900 font-bold text-xs py-2.5 rounded-xl active:scale-[0.98] transition-all">تسجيل الدخول</button>
+                    <button onclick="registerUser()" class="bg-slate-800 hover:bg-slate-700 text-cyan-400 border border-slate-700/80 font-bold text-xs py-2.5 rounded-xl active:scale-[0.98] transition-all">إنشاء حساب</button>
+                </div>
+            </div>
+
+            <!-- معلومات المستخدم المسجل -->
+            <div id="user-info-container" class="hidden flex justify-between items-center bg-slate-900/60 p-3 rounded-2xl border border-slate-800">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center text-xs font-bold text-cyan-400" id="user-avatar">M</div>
+                    <div>
+                        <div class="text-xs font-black text-white" id="user-name-display">مطور ويب</div>
+                        <div class="text-[9px] text-slate-400">حساب متزامن سحابياً ✅</div>
+                    </div>
+                </div>
+                <button onclick="logoutUser()" class="text-[10px] text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 px-2.5 py-1.5 rounded-lg font-bold transition-all">خروج</button>
+            </div>
+        </section>
+
+        <!-- لوحة الإحصائيات -->
+        <section class="grid grid-cols-2 gap-3">
+            <div class="glass-card p-4 rounded-2xl flex flex-col gap-1">
+                <span class="text-[10px] text-slate-400 font-medium">المصروف الإجمالي</span>
+                <span id="total-price" class="text-base font-black text-emerald-400">0 دج</span>
+            </div>
+            <div class="glass-card p-4 rounded-2xl flex flex-col gap-1">
+                <span class="text-[10px] text-slate-400 font-medium">قيد الانتظار</span>
+                <span id="pending-count" class="text-base font-black text-cyan-400">0 صوالح</span>
+            </div>
+        </section>
+
+        <!-- شريط التقدم -->
+        <section class="glass-card p-4 rounded-2xl flex flex-col gap-2">
+            <div class="flex justify-between items-center text-xs font-bold text-slate-400">
+                <span>نسبة تسوق الأغراض</span>
+                <span id="progress-text" class="text-emerald-400">0%</span>
+            </div>
+            <div class="w-full bg-slate-900 h-2.5 rounded-full overflow-hidden border border-slate-800">
+                <div id="progress-bar" class="bg-gradient-to-r from-cyan-400 to-emerald-400 h-full w-0 transition-all duration-500 ease-out"></div>
+            </div>
+        </section>
+
+        <!-- تبويبات التنقل -->
+        <section class="flex bg-slate-950/80 p-1 rounded-2xl border border-slate-800 shadow-xl">
+            <button onclick="switchTab('shopping')" id="tab-btn-shopping" class="flex-1 text-xs py-2.5 rounded-xl font-bold transition-all bg-cyan-500/20 text-white border border-cyan-500/25">🛒 صوالحي</button>
+            <button onclick="switchTab('archive')" id="tab-btn-archive" class="flex-1 text-xs py-2.5 rounded-xl font-bold transition-all text-slate-400 hover:text-white">📅 الأرشيف اليومي</button>
+            <button onclick="switchTab('ai')" id="tab-btn-ai" class="flex-1 text-xs py-2.5 rounded-xl font-bold transition-all text-slate-400 hover:text-white flex items-center justify-center gap-1">🤖 اقتراحات AI <span class="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse"></span></button>
+        </section>
+
+        <!-- محتوى تبويب: قائمة المشتريات الحالية -->
+        <div id="tab-shopping-panel" class="flex flex-col gap-4">
+
+            <!-- نموذج إضافة سريعة -->
+            <div class="glass-card p-4 rounded-2xl flex flex-col gap-3">
+                <h3 class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <span>➕</span> إضافة غرض جديد للمشتريات
+                </h3>
+                <div class="flex flex-col gap-2.5">
+                    <input type="text" id="new-item-input" onkeypress="handleNewItemKeyPress(event)" class="w-full bg-slate-950/80 border border-slate-800 focus:border-cyan-500 rounded-xl px-4 py-3 text-xs text-white outline-none placeholder:text-slate-500" placeholder="مثال: ستيك، بريكة، مراية...">
+
+                    <!-- اختيار الفئة السريع -->
+                    <div class="flex flex-wrap gap-1">
+                        <button type="button" onclick="setCategory('💻 عمل ومكتب')" class="cat-tag-btn bg-slate-900 border border-slate-800 text-slate-400 text-[10px] font-bold px-2.5 py-1.5 rounded-lg">💻 عمل ومكتب</button>
+                        <button type="button" onclick="setCategory('🥩 اغذية')" class="cat-tag-btn bg-slate-900 border border-slate-800 text-slate-400 text-[10px] font-bold px-2.5 py-1.5 rounded-lg">🥩 أغذية</button>
+                        <button type="button" onclick="setCategory('👕 ملابس')" class="cat-tag-btn bg-slate-900 border border-slate-800 text-slate-400 text-[10px] font-bold px-2.5 py-1.5 rounded-lg">👕 ملابس</button>
+                        <button type="button" onclick="setCategory('🛒 اخرى')" class="cat-tag-btn bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-bold px-2.5 py-1.5 rounded-lg">🛒 أخرى</button>
+                    </div>
+
+                    <button onclick="addNewItem()" class="w-full bg-cyan-500 hover:bg-cyan-600 text-[#0b132b] font-black text-xs py-3 rounded-xl transition-all shadow-lg shadow-cyan-500/10">إدراج في القائمة</button>
+                </div>
+            </div>
+
+            <!-- الفلاتر -->
+            <div class="flex items-center gap-2 bg-slate-950/40 p-2 rounded-xl border border-slate-800">
+                <input type="text" id="search-box" oninput="renderApp()" class="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white outline-none placeholder:text-slate-500" placeholder="🔍 ابحث عن غرض...">
+                <select id="category-filter" onchange="renderApp()" class="bg-slate-900 border border-slate-800 rounded-lg px-2 py-2 text-[10px] text-slate-300 font-bold">
+                    <option value="all">كل الأقسام</option>
+                    <option value="💻 عمل ومكتب">💻 عمل ومكتب</option>
+                    <option value="🥩 اغذية">🥩 أغذية</option>
+                    <option value="👕 ملابس">👕 ملابس</option>
+                    <option value="🛒 اخرى">🛒 أخرى</option>
+                </select>
+            </div>
+
+            <!-- قائمة العناصر قيد الانتظار -->
+            <div class="flex flex-col gap-2">
+                <div class="flex justify-between items-center px-1">
+                    <h4 class="text-xs font-bold text-slate-400 flex items-center gap-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                        صوالح مازال ما شريتهمش
+                    </h4>
+                    <span id="pending-badge" class="bg-slate-900 border border-slate-800 text-slate-300 text-[10px] font-bold px-2 py-0.5 rounded-full">0</span>
+                </div>
+                <div id="pending-list-container" class="flex flex-col gap-2 min-h-[50px]">
+                    <!-- سيتم حقن العناصر هنا -->
+                </div>
+            </div>
+
+        </div>
+
+        <!-- محتوى تبويب: الأرشيف المجمع حسب الأيام -->
+        <div id="tab-archive-panel" class="hidden flex flex-col gap-4">
+            <div class="glass-card p-4 rounded-2xl">
+                <h3 class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <span>📅</span> أرشيف المشتريات اليومي بالوقت والتفاصيل
+                </h3>
+                <p class="text-[9px] text-slate-400 mt-1">يتم أرشفة وترتيب الأغراض التي تشتريها تلقائياً حسب اليوم والساعة بدقة لسهولة مراجعة الميزانية.</p>
+            </div>
+
+            <div id="archive-days-container" class="flex flex-col gap-4">
+                <!-- سيتم حقن أرشيف الأيام هنا -->
+            </div>
+        </div>
+
+        <!-- محتوى تبويب: مقترحات مساعد AI -->
+        <div id="tab-ai-panel" class="hidden flex flex-col gap-4">
+            <div class="bg-gradient-to-br from-indigo-950/60 to-purple-950/60 border border-purple-500/25 p-5 rounded-3xl relative overflow-hidden">
+                <div class="absolute -right-6 -bottom-6 w-20 h-20 bg-purple-500/10 rounded-full blur-xl"></div>
+                <div class="relative z-10 flex flex-col gap-2">
+                    <div class="flex items-center gap-2">
+                        <span class="text-2xl">🤖</span>
+                        <div>
+                            <h3 class="text-xs font-black text-white">مستشار التسوق ومقترحات الـ AI للـ Setup</h3>
+                            <p class="text-[9px] text-purple-300">مساعد ذكي يختار لك صوالح مفيدة لمطور ومصمم ويب جزائري</p>
+                        </div>
+                    </div>
+                    <p class="text-xs text-slate-300 leading-relaxed mt-1">
+                        أهلاً بك يا فنان! يقوم الذكاء الاصطناعي بمراجعة متطلبات عملك كمصمم ومبرمج في الجزائر واقتراح إضافات ذكية للـ Setup أو الإنتاجية مع أسعار تقريبية بالدج.
+                    </p>
+                    <button onclick="getAISuggestions()" id="ai-gen-btn" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-black text-xs py-2.5 rounded-xl transition-all shadow-lg shadow-purple-500/10 mt-2 flex items-center justify-center gap-2">
+                        <span>🧠</span> استشر الذكاء الاصطناعي الآن
+                        <span id="ai-spinner" class="hidden w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="flex flex-col gap-2.5">
+                <h4 class="text-xs font-bold text-slate-400 flex items-center gap-1.5">
+                    <span>💡</span> صوالح مقترحة لك مستقبلاً:
+                </h4>
+                <div id="ai-suggestions-list" class="flex flex-col gap-2.5">
+                    <!-- سيتم حقن مقترحات AI هنا -->
+                    <div class="text-center p-6 bg-slate-950/40 border border-slate-800 rounded-2xl">
+                        <p class="text-[10px] text-slate-500">اضغط على زر التوليد الذكي للـ AI بالأعلى لاكتشاف اقتراحات مذهلة!</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- أدوات عالمية -->
+        <footer class="flex flex-col gap-2 mt-2">
+            <button onclick="shareShoppingSummary()" class="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs py-3 rounded-xl border border-slate-700/60 flex items-center justify-center gap-1.5">
+                <span>📋</span> نسخ ملخص القائمة لإرساله عبر Viber / WhatsApp
+            </button>
+            <button onclick="openResetModal()" class="w-full text-rose-400 bg-rose-500/5 hover:bg-rose-500/10 border border-rose-500/10 font-bold text-[10px] py-2 rounded-xl">
+                ⚠️ إعادة تهيئة التطبيق ومسح كل البيانات
+            </button>
+        </footer>
+
+    </main>
+
+    <!-- نافذة منبثقة: إدخال السعر عند الشراء -->
+    <div id="price-modal" class="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 hidden items-center justify-center p-4">
+        <div class="bg-[#1c2541] border border-slate-800 w-full max-w-sm rounded-3xl p-5 shadow-2xl flex flex-col gap-4 transform scale-95 transition-all">
+            <div class="text-center">
+                <span class="text-3xl">💰</span>
+                <h3 id="modal-title" class="text-sm font-black text-white mt-2">شحال لقيت السعر؟</h3>
+                <p class="text-[10px] text-slate-400 mt-1">أدخل الثمن بـ دج ليتم حسابه وحفظه في الأرشيف بالوقت والتاريخ</p>
+            </div>
+            <input type="number" id="modal-price-input" class="w-full bg-slate-950 border border-slate-800 focus:border-cyan-500 rounded-2xl py-3 px-4 text-center text-lg font-bold text-white outline-none" placeholder="السعر بـ دج" pattern="[0-9]*" inputmode="numeric">
+
+            <!-- أوسمة الأسعار الجزائرية السريعة -->
+            <div class="grid grid-cols-4 gap-1.5">
+                <button type="button" onclick="setQuickPrice(50)" class="bg-slate-900 text-slate-300 font-bold py-1.5 rounded-lg text-[10px]">50</button>
+                <button type="button" onclick="setQuickPrice(100)" class="bg-slate-900 text-slate-300 font-bold py-1.5 rounded-lg text-[10px]">100</button>
+                <button type="button" onclick="setQuickPrice(500)" class="bg-slate-900 text-slate-300 font-bold py-1.5 rounded-lg text-[10px]">500</button>
+                <button type="button" onclick="setQuickPrice(1000)" class="bg-slate-900 text-slate-300 font-bold py-1.5 rounded-lg text-[10px]">1000</button>
+                <button type="button" onclick="setQuickPrice(1500)" class="bg-slate-900 text-slate-300 font-bold py-1.5 rounded-lg text-[10px]">1500</button>
+                <button type="button" onclick="setQuickPrice(2000)" class="bg-slate-900 text-slate-300 font-bold py-1.5 rounded-lg text-[10px]">2000</button>
+                <button type="button" onclick="setQuickPrice(4500)" class="bg-slate-900 text-slate-300 font-bold py-1.5 rounded-lg text-[10px]">4500</button>
+                <button type="button" onclick="setQuickPrice(8700)" class="bg-slate-900 text-slate-300 font-bold py-1.5 rounded-lg text-[10px]">8700</button>
+            </div>
+
+            <div class="flex gap-2 mt-2">
+                <button onclick="confirmBuyAction()" class="flex-1 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black py-3 rounded-xl transition-colors">تأكيد الشراء ✅</button>
+                <button onclick="closeBuyModal()" class="flex-1 bg-slate-900 text-slate-400 font-bold py-3 rounded-xl transition-colors">إلغاء</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- نافذة منبثقة: تأكيد مسح البيانات -->
+    <div id="reset-modal" class="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 hidden items-center justify-center p-4">
+        <div class="bg-[#1c2541] border border-slate-800 w-full max-w-sm rounded-3xl p-5 shadow-2xl flex flex-col gap-4 text-center">
+            <span class="text-3xl">⚠️</span>
+            <h3 class="text-sm font-black text-white">هل أنت متأكد من مسح البيانات؟</h3>
+            <p class="text-[10px] text-slate-400">سيتم مسح قائمتك وقاعدة البيانات السحابية بالكامل للبدء مجدداً من الصفر.</p>
+            <div class="flex gap-2 mt-2">
+                <button onclick="executeReset()" class="flex-1 bg-rose-500 text-white font-bold py-3 rounded-xl hover:bg-rose-600 transition-colors">نعم، امسح كلش</button>
+                <button onclick="closeResetModal()" class="flex-1 bg-slate-900 text-slate-400 font-bold py-3 rounded-xl hover:bg-slate-800 transition-colors">إلغاء</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- تحميل ملف JavaScript الرئيسي -->
+    <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+/* الأنماط الأساسية في حالة فشل تحميل Tailwind أو تحليله */
+body {
+    background-color: #0b132b;
+    color: #f8fafc;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* تخصيص شريط التمرير (Scrollbar) */
+::-webkit-scrollbar {
+    width: 4px;
+}
+::-webkit-scrollbar-track {
+    background: #0b132b;
+}
+::-webkit-scrollbar-thumb {
+    background: #1c2541;
+    border-radius: 10px;
+}
+
+/* تأثير الزجاج (Glassmorphism) */
+.glass-card {
+    background: rgba(28, 37, 65, 0.6);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
